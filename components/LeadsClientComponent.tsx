@@ -1,3 +1,4 @@
+// components/LeadsClientComponent.tsx
 
 "use client";
 
@@ -6,58 +7,19 @@ import { Plus } from "lucide-react";
 import { addDays, startOfDay, endOfDay, startOfMonth, endOfYear, differenceInDays } from "date-fns";
 import { DateRange } from "react-day-picker";
 import { Button } from "@/components/ui/button";
-import { StyledCard } from "@/components/ui/styled-card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AppSidebar } from '@/components/AppSidebar';
-import { Building2, Home, Settings, Target, Mail, Phone, BarChart3, FileText, Users, User } from "lucide-react";
-import { HeroUILeadDetailDrawer } from './HeroUILeadDetailDrawer'; 
 import { LeadsTable } from '@/components/LeadsTable';
 import { StatsCards } from '@/components/StatsCards';
 import { FilterBar } from "@/components/FilterBar";
 import { NewLeadForm } from './NewLeadForm';
 import { supabase } from "../supabaseClient";
-import { Lead, QualificationStatus } from "@/app/page";
+import { Lead, QualificationStatus, SortConfig } from "@/app/page";
 import { LeadsBySourcePieChart } from './LeadsBySourcePieChart';
 import { LeadsByDayChart } from './LeadsByDayChart';
 import { format } from 'date-fns';
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-
-// Define SortConfig locally since it's not exported from LeadsTable
-type SortConfig = {
-  column: keyof Lead;
-  direction: "asc" | "desc";
-};
-
-const navigationData = {
-    // Grupo Principal de Navegação
-    navMain: [
-      { 
-        title: "Navegação", 
-        items: [ 
-          { title: "Painel Principal", url: "#", icon: Home, isActive: true }, 
-          { title: "Todos os Leads", url: "#", icon: Users } 
-        ] 
-      },
-      // Grupo para Análises e Relatórios
-      { 
-        title: "Análise", 
-        items: [ 
-          { title: "Relatórios", url: "#", icon: BarChart3 },
-          { title: "Origem dos Leads", url: "#", icon: Target }
-        ] 
-      },
-      // Grupo para Configurações Gerais
-      { 
-        title: "Ajustes", 
-        items: [ 
-          { title: "Minha Conta", url: "#", icon: User },
-          { title: "Configurações", url: "#", icon: Settings } 
-        ] 
-      },
-    ],
-};
 
 interface LeadsClientComponentProps {
   initialLeads: Lead[];
@@ -68,23 +30,16 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
     const [allLeads, setAllLeads] = useState<Lead[]>(initialLeads);
     const [error, setError] = useState<string | null>(serverError || null);
     
-    // O useEffect que atualizamos abaixo garante que o estado local
-    // seja atualizado com os dados iniciais do servidor.
     useEffect(() => {
         setAllLeads(initialLeads);
     }, [initialLeads]);
     
-    // --- INÍCIO DO NOVO CÓDIGO PARA REALTIME ---
     useEffect(() => {
-        // 1. Cria um canal de comunicação único para a tabela 'leads'.
         const channel = supabase.channel('leads-db-changes')
             .on(
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'leads' },
                 (payload) => {
-                    console.log('Alteração recebida!', payload);
-
-                    // 2. Trata cada tipo de evento (INSERT, UPDATE, DELETE)
                     if (payload.eventType === 'INSERT') {
                         const newLead = payload.new as Lead;
                         setAllLeads(currentLeads => [newLead, ...currentLeads]);
@@ -107,37 +62,26 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
             )
             .subscribe();
 
-        // 3. Função de limpeza: É MUITO IMPORTANTE remover a inscrição 
-        //    quando o componente for "desmontado" para evitar vazamentos de memória.
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [supabase]); // Dependência do cliente supabase para garantir que ele esteja disponível.
-    // --- FIM DO NOVO CÓDIGO PARA REALTIME ---
+    }, [supabase]);
 
-    const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("todos");
     const [sourceFilter, setSourceFilter] = useState("todos");
-    // Ajuste o tipo do estado dateRange para aceitar null, compatível com HeroUIRangeCalendar
-    const [dateRange, setDateRange] = useState<DateRange | null>({ from: startOfMonth(new Date()), to: endOfDay(new Date()) });
+    const [dateRange, setDateRange] = useState<DateRange | undefined>({ from: startOfMonth(new Date()), to: endOfDay(new Date()) });
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-    const [isSheetOpen, setIsSheetOpen] = useState(false); // Novo estado para controlar a abertura do drawer
     const [selectedRows, setSelectedRows] = useState<number[]>([]);
     const [isBulkEditDialogOpen, setIsBulkEditDialogOpen] = useState(false);
     const [newBulkStatus, setNewBulkStatus] = useState<QualificationStatus | null>(null);
-
-    // 1. Estado para controlar a ordenação
     const [sortConfig, setSortConfig] = useState<SortConfig>({
         column: "created_at",
         direction: "desc",
     });
-
-    // --- INÍCIO DO NOVO CÓDIGO ---
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 15;
-    // --- FIM DO NOVO CÓDIGO ---
 
     const getStandardizedOrigin = (source?: string, utm_source?: string): string => {
         if (utm_source === 'go-ads' || source === 'google-ads') return 'Google';
@@ -150,45 +94,27 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
         return 'Outros';
     };
 
-    const leadsWithOrigin = useMemo(() => allLeads.map(lead => ({ ...lead, origin: getStandardizedOrigin((lead as any).source, (lead as any).utm_source) })), [allLeads]);
-
-    const filteredLeadsForCards = useMemo(() => leadsWithOrigin.filter((lead) => {
-        const matchesStatus = statusFilter === "todos" || lead.qualification_status === statusFilter;
-        const matchesSource = sourceFilter === "todos" || lead.origem === sourceFilter;
-        let matchesDate = true;
-        if (dateRange?.from) {
-            // Agora usamos new Date() diretamente, que interpreta a string UTC corretamente.
-            const leadDate = lead.created_at ? new Date(lead.created_at) : null;
-
-            const fromDate = startOfDay(dateRange.from);
-            const toDate = dateRange.to ? endOfDay(dateRange.to) : endOfDay(dateRange.from);
-            matchesDate = leadDate ? leadDate >= fromDate && leadDate <= toDate : false;
-        }
-        // A lógica de busca por termo foi movida para o filtro da tabela para não afetar os cards
-        return matchesStatus && matchesSource && matchesDate;
-    }), [leadsWithOrigin, statusFilter, sourceFilter, dateRange]);
-
-    const filteredLeadsForTable = useMemo(() => filteredLeadsForCards.filter((lead) => {
-        const searchLower = searchTerm.toLowerCase();
-        return (lead.name?.toLowerCase() || '').includes(searchLower);
-    }), [filteredLeadsForCards, searchTerm]);
-
-    // 2. Função para lidar com a mudança de ordenação
-    const handleSort = (column: keyof Lead) => {
-        setSortConfig((currentSortConfig) => {
-            if (currentSortConfig.column === column) {
-                return {
-                    ...currentSortConfig,
-                    direction: currentSortConfig.direction === "asc" ? "desc" : "asc",
-                };
+    const leadsWithOrigin = useMemo(() => allLeads.map(lead => ({ ...lead, origem: getStandardizedOrigin((lead as any).source, (lead as any).utm_source) })), [allLeads]);
+    
+    const filteredLeads = useMemo(() => {
+        return leadsWithOrigin.filter((lead) => {
+            const searchLower = searchTerm.toLowerCase();
+            const matchesSearch = (lead.name?.toLowerCase() || '').includes(searchLower);
+            const matchesStatus = statusFilter === "todos" || lead.qualification_status === statusFilter;
+            const matchesSource = sourceFilter === "todos" || lead.origem === sourceFilter;
+            let matchesDate = true;
+            if (dateRange?.from) {
+                const leadDate = lead.created_at ? new Date(lead.created_at) : null;
+                const fromDate = startOfDay(dateRange.from);
+                const toDate = dateRange.to ? endOfDay(dateRange.to) : endOfDay(dateRange.from);
+                matchesDate = leadDate ? leadDate >= fromDate && leadDate <= toDate : false;
             }
-            return { column, direction: "asc" };
+            return matchesSearch && matchesStatus && matchesSource && matchesDate;
         });
-    };
+    }, [leadsWithOrigin, searchTerm, statusFilter, sourceFilter, dateRange]);
 
-    // 3. Ordenação dos leads filtrados para a tabela
-    const sortedLeadsForTable = useMemo(() => {
-        const leads = [...filteredLeadsForTable];
+    const sortedLeads = useMemo(() => {
+        const leads = [...filteredLeads];
         leads.sort((a, b) => {
             const col = sortConfig.column;
             let aValue = (a as any)[col];
@@ -204,70 +130,22 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
             return 0;
         });
         return leads;
-    }, [filteredLeadsForTable, sortConfig]);
+    }, [filteredLeads, sortConfig]);
 
-    // --- INÍCIO DO NOVO CÓDIGO PARA LÓGICA DE PAGINAÇÃO ---
-    const totalPages = useMemo(() => {
-        return Math.ceil(sortedLeadsForTable.length / itemsPerPage);
-    }, [sortedLeadsForTable, itemsPerPage]);
-
+    const totalPages = useMemo(() => Math.ceil(sortedLeads.length / itemsPerPage), [sortedLeads, itemsPerPage]);
     const paginatedLeads = useMemo(() => {
         const startIndex = (currentPage - 1) * itemsPerPage;
-        const endIndex = startIndex + itemsPerPage;
-        return sortedLeadsForTable.slice(startIndex, endIndex);
-    }, [sortedLeadsForTable, currentPage, itemsPerPage]);
+        return sortedLeads.slice(startIndex, startIndex + itemsPerPage);
+    }, [sortedLeads, currentPage, itemsPerPage]);
 
-    useEffect(() => {
-        if (currentPage > totalPages && totalPages > 0) {
-            setCurrentPage(totalPages);
-        } else if (currentPage === 0 && totalPages > 0) {
-            setCurrentPage(1);
-        }
-    }, [currentPage, totalPages]);
-
-    const handlePageChange = (page: number) => {
-        if (page >= 1 && page <= totalPages) {
-            setCurrentPage(page);
-        }
-    };
-    // --- FIM DO NOVO CÓDIGO PARA LÓGICA DE PAGINAÇÃO ---
-
-    // Leads por dia para gráfico
-    const leadsByDayData = useMemo(() => {
-        const leadsCountByDay: { [key: string]: number } = {};
-
-        filteredLeadsForCards.forEach(lead => {
-            // Usamos new Date() e formatamos para a data local do navegador
-            if(lead.created_at) {
-                const day = format(new Date(lead.created_at), 'yyyy-MM-dd');
-                if (!leadsCountByDay[day]) {
-                    leadsCountByDay[day] = 0;
-                }
-                leadsCountByDay[day]++;
-            }
-        });
-
-        // Converte o objeto em um array e ordena por data
-        return Object.entries(leadsCountByDay)
-            .map(([date, count]) => ({ date, leads: count }))
-            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-    }, [filteredLeadsForCards]);
-
-    const {
-      totalLeads, deltaLeads,
-      hotLeads, deltaHot,
-      coldLeads, deltaCold,
-      warmLeads, deltaWarm,
-      sales, deltaSales
-    } = useMemo(() => {
+    const { totalLeads, deltaLeads, hotLeads, deltaHot, coldLeads, deltaCold, warmLeads, deltaWarm, sales, deltaSales } = useMemo(() => {
         const getDelta = (current: number, prev: number) => { if (prev === 0) return current > 0 ? "100.0" : "0.0"; const delta = (((current - prev) / prev) * 100); return delta.toFixed(1); }
         const getPreviousPeriodRange = (): DateRange | undefined => { if (!dateRange || !dateRange.from) return undefined; const from = dateRange.from; const to = dateRange.to ?? from; const diff = differenceInDays(to, from); const prevTo = addDays(from, -1); const prevFrom = addDays(prevTo, -diff); return { from: startOfDay(prevFrom), to: endOfDay(prevTo) }; }
         
-        const currentLeads = filteredLeadsForCards;
+        const currentPeriodLeads = filteredLeads;
         
         const prevDateRange = getPreviousPeriodRange();
-        const prevLeads = prevDateRange ? allLeads.filter(lead => { const matchesStatus = statusFilter === "todos" || lead.qualification_status === statusFilter; const matchesSource = sourceFilter === "todos" || lead.origem === sourceFilter; const leadDate = new Date(lead.created_at); const matchesDate = leadDate >= prevDateRange.from! && leadDate <= prevDateRange.to!; return matchesStatus && matchesSource && matchesDate; }) : [];
+        const previousPeriodLeads = prevDateRange ? allLeads.filter(lead => { const leadDate = new Date(lead.created_at); return leadDate >= prevDateRange.from! && leadDate <= prevDateRange.to!; }) : [];
 
         const calculateMetrics = (leads: Lead[]) => ({
             total: leads.length,
@@ -277,157 +155,141 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
             sales: leads.filter(l => l.qualification_status === 'Venda').length,
         });
 
-        const currentMetrics = calculateMetrics(currentLeads);
-        const prevMetrics = calculateMetrics(prevLeads);
+        const currentMetrics = calculateMetrics(currentPeriodLeads);
+        const prevMetrics = calculateMetrics(previousPeriodLeads);
 
         return {
-            totalLeads: currentMetrics.total,
-            deltaLeads: getDelta(currentMetrics.total, prevMetrics.total),
-            hotLeads: currentMetrics.hot,
-            deltaHot: getDelta(currentMetrics.hot, prevMetrics.hot),
-            coldLeads: currentMetrics.cold,
-            deltaCold: getDelta(currentMetrics.cold, prevMetrics.cold),
-            warmLeads: currentMetrics.warm,
-            deltaWarm: getDelta(currentMetrics.warm, prevMetrics.warm),
-            sales: currentMetrics.sales,
-            deltaSales: getDelta(currentMetrics.sales, prevMetrics.sales),
+            totalLeads: currentMetrics.total, deltaLeads: getDelta(currentMetrics.total, prevMetrics.total),
+            hotLeads: currentMetrics.hot, deltaHot: getDelta(currentMetrics.hot, prevMetrics.hot),
+            coldLeads: currentMetrics.cold, deltaCold: getDelta(currentMetrics.cold, prevMetrics.cold),
+            warmLeads: currentMetrics.warm, deltaWarm: getDelta(currentMetrics.warm, prevMetrics.warm),
+            sales: currentMetrics.sales, deltaSales: getDelta(currentMetrics.sales, prevMetrics.sales)
         };
-    }, [filteredLeadsForCards, allLeads, dateRange, statusFilter, sourceFilter]);
-
-    const handleLeadAdded = (newLead: Lead) => { /* A lógica de tempo real já cuida disso, mas podemos manter para otimismo */ };
-    const handleQualificationChange = async (leadId: number, newQualification: QualificationStatus) => { const originalLeads = [...allLeads]; setAllLeads(currentLeads => currentLeads.map(lead => lead.id === leadId ? { ...lead, qualification_status: newQualification } : lead )); const { error } = await supabase.from('leads').update({ qualification_status: newQualification }).eq('id', leadId); if (error) { alert(`Erro ao atualizar o lead: ${error.message}`); setAllLeads(originalLeads); }};
-    const handleRowSelect = (leadId: number) => { setSelectedRows(prev => prev.includes(leadId) ? prev.filter(id => id !== leadId) : [...prev, leadId]); };
-    const handleSelectAll = (checked: boolean | 'indeterminate') => { if (checked === true) { setSelectedRows(filteredLeadsForTable.map(lead => lead.id)); } else { setSelectedRows([]); } };
-    const handleBulkUpdate = async () => { if (!newBulkStatus || selectedRows.length === 0) return; const originalLeads = [...allLeads]; setAllLeads(prevLeads => prevLeads.map(lead => selectedRows.includes(lead.id) ? { ...lead, qualification_status: newBulkStatus } : lead )); const { error } = await supabase.from('leads').update({ qualification_status: newBulkStatus }).in('id', selectedRows); if (error) { alert(`Erro ao atualizar leads: ${error.message}`); setAllLeads(originalLeads); } setSelectedRows([]); setNewBulkStatus(null); setIsBulkEditDialogOpen(false); };
+    }, [filteredLeads, allLeads, dateRange]);
 
 
-  return (
-    // O container principal define o layout em duas colunas e a altura total da tela
-    <div className="flex h-screen bg-background">
-      <AppSidebar />
-      <div className="flex-1 flex flex-col">
-        {/* Cabeçalho do conteúdo com altura padrão, sem borda preta, fundo do tema */}
-        <header className="flex items-center justify-between px-6 h-16 border-b bg-background">
-          <div>
-            <h1 className="text-xl font-bold">Painel de Leads</h1>
-            <p className="text-sm text-muted-foreground">Visão geral do seu funil de vendas</p>
-          </div>
-          <div className="flex gap-4">
-            <Button variant="outline">Configurações</Button>
-            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Novo Lead
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[550px]">
-                <DialogHeader>
-                  <DialogTitle>Adicionar Novo Lead</DialogTitle>
-                  <DialogDescription>Preencha as informações do novo lead abaixo.</DialogDescription>
-                </DialogHeader>
-                <NewLeadForm onLeadAdded={handleLeadAdded} onClose={() => setIsAddDialogOpen(false)} />
-              </DialogContent>
-            </Dialog>
-          </div>
-        </header>
+    const handleSort = (column: keyof Lead) => {
+      setSortConfig(current => ({
+        column,
+        direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc'
+      }));
+    };
+    
+    const handlePageChange = (page: number) => {
+        if (page >= 1 && page <= totalPages) {
+            setCurrentPage(page);
+        }
+    };
 
-        {/* Área principal com scroll, ocupando o restante do espaço */}
-        <main className="flex-1 p-6 space-y-6 overflow-y-auto">
-          {error ? <p className="text-red-500">Erro ao carregar os dados: {error}</p> : (
-            <>
-              <StatsCards
-                loading={initialLeads.length === 0 && !error}
-                totalLeads={totalLeads} deltaLeads={deltaLeads}
-                hotLeads={hotLeads} deltaHot={deltaHot}
-                coldLeads={coldLeads} deltaCold={deltaCold}
-                warmLeads={warmLeads} deltaWarm={deltaWarm}
-                sales={sales} deltaSales={deltaSales}
-              />
-              
-              {/* ===== ÁREA MODIFICADA ===== */}
-              {/* Gráficos com proporção 60-40 em ecrãs grandes e com a mesma altura */}
-              <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
-                <div className="lg:col-span-3">
-                  <LeadsByDayChart data={leadsByDayData} />
-                </div>
-                <div className="lg:col-span-2">
-                  <LeadsBySourcePieChart leads={filteredLeadsForCards} />
-                </div>
-              </div>
-              {/* ===== FIM DA ÁREA MODIFICADA ===== */}
+    const handleQualificationChange = async (leadId: number, newQualification: QualificationStatus) => {
+      const originalLeads = [...allLeads];
+      setAllLeads(currentLeads => currentLeads.map(lead => lead.id === leadId ? { ...lead, qualification_status: newQualification } : lead ));
+      const { error } = await supabase.from('leads').update({ qualification_status: newQualification }).eq('id', leadId);
+      if (error) {
+          alert(`Erro ao atualizar o lead: ${error.message}`);
+          setAllLeads(originalLeads);
+      }
+    };
+    
+    return (
+        <div className="flex h-screen bg-background">
+            <AppSidebar />
+            <div className="flex-1 flex flex-col overflow-hidden">
+                <header className="flex items-center justify-between px-6 h-16 border-b bg-background">
+                    <div>
+                        <h1 className="text-xl font-bold">Painel de Leads</h1>
+                        <p className="text-sm text-muted-foreground">Visão geral do seu funil de vendas</p>
+                    </div>
+                    <div className="flex gap-4">
+                        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                            <DialogTrigger asChild><Button><Plus className="w-4 h-4 mr-2" />Novo Lead</Button></DialogTrigger>
+                            <DialogContent className="sm:max-w-[550px]">
+                                <DialogHeader><DialogTitle>Adicionar Novo Lead</DialogTitle><DialogDescription>Preencha as informações do novo lead.</DialogDescription></DialogHeader>
+                                <NewLeadForm onLeadAdded={() => {}} onClose={() => setIsAddDialogOpen(false)} />
+                            </DialogContent>
+                        </Dialog>
+                    </div>
+                </header>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Todos os Leads</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <FilterBar
-                    searchTerm={searchTerm} onSearchTermChange={setSearchTerm}
-                    statusFilter={statusFilter} onStatusFilterChange={setStatusFilter}
-                    sourceFilter={sourceFilter} onSourceFilterChange={setSourceFilter}
-                    dateRange={dateRange ?? undefined} onDateChange={setDateRange as any}
-                    selectedRowsCount={selectedRows.length}
-                    isBulkEditDialogOpen={isBulkEditDialogOpen} onBulkEditOpenChange={setIsBulkEditDialogOpen}
-                    onNewBulkStatusChange={setNewBulkStatus}
-                    handleBulkUpdate={handleBulkUpdate} newBulkStatus={newBulkStatus}
-                  />
-                  <LeadsTable
-                    loading={initialLeads.length === 0 && !error}
-                    leads={paginatedLeads}
-                    selectedRows={selectedRows}
-                    onRowSelect={(leadIds) => setSelectedRows(leadIds)}
-                    onQualificationChange={handleQualificationChange}
-                    onLeadClick={(lead) => {
-                      setSelectedLead(lead);
-                      setIsSheetOpen(true);
-                    }}
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                  />
-                  {/* ADICIONADO: Componente de paginação */}
-                  {totalPages > 1 && (
-                    <Pagination>
-                        <PaginationContent>
-                            <PaginationItem>
-                                <PaginationPrevious 
-                                    href="#"
-                                    onClick={(e) => { e.preventDefault(); handlePageChange(currentPage - 1); }}
-                                    className={currentPage === 1 ? 'pointer-events-none opacity-50' : undefined}
-                                />
-                            </PaginationItem>
-                            {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                                <PaginationItem key={page}>
-                                    <PaginationLink 
-                                        href="#"
-                                        onClick={(e) => { e.preventDefault(); handlePageChange(page); }}
-                                        isActive={currentPage === page}
-                                    >
-                                        {page}
-                                    </PaginationLink>
-                                </PaginationItem>
-                            ))}
-                            <PaginationItem>
-                                <PaginationNext 
-                                    href="#"
-                                    onClick={(e) => { e.preventDefault(); handlePageChange(currentPage + 1); }}
-                                    className={currentPage === totalPages ? 'pointer-events-none opacity-50' : undefined}
-                                />
-                            </PaginationItem>
-                        </PaginationContent>
-                    </Pagination>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          )}
-        </main>
-      </div>
-      <HeroUILeadDetailDrawer
-        lead={selectedLead}
-        isOpen={isSheetOpen}
-        onOpenChange={setIsSheetOpen}
-      />
-    </div>
-  );
+                <main className="flex-1 p-6 space-y-6 overflow-y-auto">
+                   <StatsCards
+                        loading={initialLeads.length === 0 && !error}
+                        totalLeads={totalLeads} deltaLeads={deltaLeads}
+                        hotLeads={hotLeads} deltaHot={deltaHot}
+                        coldLeads={coldLeads} deltaCold={deltaCold}
+                        warmLeads={warmLeads} deltaWarm={deltaWarm}
+                        sales={sales} deltaSales={deltaSales}
+                    />
+                    <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
+                        <div className="lg:col-span-3">
+                            <LeadsByDayChart data={useMemo(() => {
+                                const leadsByDay = filteredLeads.reduce((acc, lead) => {
+                                    const date = format(new Date(lead.created_at), 'yyyy-MM-dd');
+                                    acc[date] = (acc[date] || 0) + 1;
+                                    return acc;
+                                }, {} as Record<string, number>);
+                                
+                                return Object.entries(leadsByDay).map(([date, leads]) => ({
+                                    date,
+                                    leads
+                                }));
+                            }, [filteredLeads])} />
+                        </div>
+                        <div className="lg:col-span-2">
+                            <LeadsBySourcePieChart leads={filteredLeads} />
+                        </div>
+                    </div>
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Todos os Leads</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <FilterBar
+                                searchTerm={searchTerm} onSearchTermChange={setSearchTerm}
+                                statusFilter={statusFilter} onStatusFilterChange={setStatusFilter}
+                                sourceFilter={sourceFilter} onSourceFilterChange={setSourceFilter}
+                                dateRange={dateRange} onDateChange={setDateRange}
+                                selectedRowsCount={selectedRows.length}
+                                onBulkEditOpenChange={setIsBulkEditDialogOpen}
+                                onNewBulkStatusChange={setNewBulkStatus}
+                                handleBulkUpdate={() => {}} newBulkStatus={newBulkStatus}
+                                isBulkEditDialogOpen={isBulkEditDialogOpen}
+                            />
+                            <LeadsTable
+                                loading={initialLeads.length === 0 && !error}
+                                leads={paginatedLeads}
+                                selectedRows={selectedRows}
+                                onRowSelect={setSelectedRows}
+                                onQualificationChange={handleQualificationChange}
+                                onLeadClick={(lead) => {
+                                    // Ação de clique desativada por enquanto
+                                    setSelectedLead(lead);
+                                    console.log("Lead selecionado:", lead);
+                                }}
+                                sortConfig={sortConfig}
+                                onSort={handleSort}
+                            />
+                            {totalPages > 1 && (
+                                <Pagination>
+                                    <PaginationContent>
+                                        <PaginationItem>
+                                            <PaginationPrevious href="#" onClick={(e) => { e.preventDefault(); handlePageChange(currentPage - 1); }} className={currentPage === 1 ? 'pointer-events-none opacity-50' : ''} />
+                                        </PaginationItem>
+                                        {[...Array(totalPages).keys()].map(page => (
+                                            <PaginationItem key={page + 1}>
+                                                <PaginationLink href="#" onClick={(e) => { e.preventDefault(); handlePageChange(page + 1); }} isActive={currentPage === page + 1}>{page + 1}</PaginationLink>
+                                            </PaginationItem>
+                                        ))}
+                                        <PaginationItem>
+                                            <PaginationNext href="#" onClick={(e) => { e.preventDefault(); handlePageChange(currentPage + 1); }} className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''} />
+                                        </PaginationItem>
+                                    </PaginationContent>
+                                </Pagination>
+                            )}
+                        </CardContent>
+                    </Card>
+                </main>
+            </div>
+        </div>
+    );
 }
