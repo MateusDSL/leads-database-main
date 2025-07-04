@@ -1,4 +1,3 @@
-// components/LeadsClientComponent.tsx
 
 "use client";
 
@@ -12,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AppSidebar } from '@/components/AppSidebar';
 import { Building2, Home, Settings, Target, Mail, Phone, BarChart3, FileText, Users, User } from "lucide-react";
-import { LeadDetailSheet } from '@/components/LeadDetailSheet';
+import { HeroUILeadDetailDrawer } from './HeroUILeadDetailDrawer'; 
 import { LeadsTable } from '@/components/LeadsTable';
 import { StatsCards } from '@/components/StatsCards';
 import { FilterBar } from "@/components/FilterBar";
@@ -23,6 +22,8 @@ import { LeadsBySourcePieChart } from './LeadsBySourcePieChart';
 import { LeadsByDayChart } from './LeadsByDayChart';
 import { format } from 'date-fns';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+
 // Define SortConfig locally since it's not exported from LeadsTable
 type SortConfig = {
   column: keyof Lead;
@@ -118,9 +119,11 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("todos");
     const [sourceFilter, setSourceFilter] = useState("todos");
-    const [dateRange, setDateRange] = useState<DateRange | undefined>({ from: startOfMonth(new Date()), to: endOfDay(new Date()), });
+    // Ajuste o tipo do estado dateRange para aceitar null, compatível com HeroUIRangeCalendar
+    const [dateRange, setDateRange] = useState<DateRange | null>({ from: startOfMonth(new Date()), to: endOfDay(new Date()) });
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+    const [isSheetOpen, setIsSheetOpen] = useState(false); // Novo estado para controlar a abertura do drawer
     const [selectedRows, setSelectedRows] = useState<number[]>([]);
     const [isBulkEditDialogOpen, setIsBulkEditDialogOpen] = useState(false);
     const [newBulkStatus, setNewBulkStatus] = useState<QualificationStatus | null>(null);
@@ -130,6 +133,11 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
         column: "created_at",
         direction: "desc",
     });
+
+    // --- INÍCIO DO NOVO CÓDIGO ---
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 15;
+    // --- FIM DO NOVO CÓDIGO ---
 
     const getStandardizedOrigin = (source?: string, utm_source?: string): string => {
         if (utm_source === 'go-ads' || source === 'google-ads') return 'Google';
@@ -185,7 +193,6 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
             const col = sortConfig.column;
             let aValue = (a as any)[col];
             let bValue = (b as any)[col];
-            // Para datas, converte para timestamp
             if (col === "created_at") {
                 aValue = aValue ? new Date(aValue).getTime() : 0;
                 bValue = bValue ? new Date(bValue).getTime() : 0;
@@ -198,6 +205,32 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
         });
         return leads;
     }, [filteredLeadsForTable, sortConfig]);
+
+    // --- INÍCIO DO NOVO CÓDIGO PARA LÓGICA DE PAGINAÇÃO ---
+    const totalPages = useMemo(() => {
+        return Math.ceil(sortedLeadsForTable.length / itemsPerPage);
+    }, [sortedLeadsForTable, itemsPerPage]);
+
+    const paginatedLeads = useMemo(() => {
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        return sortedLeadsForTable.slice(startIndex, endIndex);
+    }, [sortedLeadsForTable, currentPage, itemsPerPage]);
+
+    useEffect(() => {
+        if (currentPage > totalPages && totalPages > 0) {
+            setCurrentPage(totalPages);
+        } else if (currentPage === 0 && totalPages > 0) {
+            setCurrentPage(1);
+        }
+    }, [currentPage, totalPages]);
+
+    const handlePageChange = (page: number) => {
+        if (page >= 1 && page <= totalPages) {
+            setCurrentPage(page);
+        }
+    };
+    // --- FIM DO NOVO CÓDIGO PARA LÓGICA DE PAGINAÇÃO ---
 
     // Leads por dia para gráfico
     const leadsByDayData = useMemo(() => {
@@ -333,7 +366,7 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
                     searchTerm={searchTerm} onSearchTermChange={setSearchTerm}
                     statusFilter={statusFilter} onStatusFilterChange={setStatusFilter}
                     sourceFilter={sourceFilter} onSourceFilterChange={setSourceFilter}
-                    dateRange={dateRange} onDateChange={setDateRange}
+                    dateRange={dateRange ?? undefined} onDateChange={setDateRange as any}
                     selectedRowsCount={selectedRows.length}
                     isBulkEditDialogOpen={isBulkEditDialogOpen} onBulkEditOpenChange={setIsBulkEditDialogOpen}
                     onNewBulkStatusChange={setNewBulkStatus}
@@ -341,25 +374,59 @@ export default function LeadsClientComponent({ initialLeads, serverError }: Lead
                   />
                   <LeadsTable
                     loading={initialLeads.length === 0 && !error}
-                    leads={sortedLeadsForTable}
+                    leads={paginatedLeads}
                     selectedRows={selectedRows}
                     onRowSelect={(leadIds) => setSelectedRows(leadIds)}
                     onQualificationChange={handleQualificationChange}
-                    onLeadClick={(lead) => setSelectedLead(lead)}
-                    // 4. Passa o estado e função de ordenação para a tabela
+                    onLeadClick={(lead) => {
+                      setSelectedLead(lead);
+                      setIsSheetOpen(true);
+                    }}
                     sortConfig={sortConfig}
                     onSort={handleSort}
                   />
+                  {/* ADICIONADO: Componente de paginação */}
+                  {totalPages > 1 && (
+                    <Pagination>
+                        <PaginationContent>
+                            <PaginationItem>
+                                <PaginationPrevious 
+                                    href="#"
+                                    onClick={(e) => { e.preventDefault(); handlePageChange(currentPage - 1); }}
+                                    className={currentPage === 1 ? 'pointer-events-none opacity-50' : undefined}
+                                />
+                            </PaginationItem>
+                            {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                                <PaginationItem key={page}>
+                                    <PaginationLink 
+                                        href="#"
+                                        onClick={(e) => { e.preventDefault(); handlePageChange(page); }}
+                                        isActive={currentPage === page}
+                                    >
+                                        {page}
+                                    </PaginationLink>
+                                </PaginationItem>
+                            ))}
+                            <PaginationItem>
+                                <PaginationNext 
+                                    href="#"
+                                    onClick={(e) => { e.preventDefault(); handlePageChange(currentPage + 1); }}
+                                    className={currentPage === totalPages ? 'pointer-events-none opacity-50' : undefined}
+                                />
+                            </PaginationItem>
+                        </PaginationContent>
+                    </Pagination>
+                  )}
                 </CardContent>
               </Card>
             </>
           )}
         </main>
       </div>
-      <LeadDetailSheet
-        isOpen={!!selectedLead}
-        onOpenChange={(isOpen) => { if (!isOpen) setSelectedLead(null); }}
+      <HeroUILeadDetailDrawer
         lead={selectedLead}
+        isOpen={isSheetOpen}
+        onOpenChange={setIsSheetOpen}
       />
     </div>
   );
